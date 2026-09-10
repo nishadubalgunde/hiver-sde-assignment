@@ -1,0 +1,38 @@
+{
+  "ios_update": {
+    "description": "Problems with updating iOS, unavailable updates, failed updates, or bugs that appear after an iOS update."
+  },
+  "battery_power": {
+    "description": "Battery draining quickly, charging problems, unexpected shutdowns, or power-related issues."
+  },
+  "app_issue": {
+    "description": "Applications crashing, freezing, failing to open, loading incorrectly, or behaving unexpectedly."
+  },
+  "device_performance": {
+    "description": "General iPhone, iPad, or Mac performance problems such as freezing, touchscreen issues, random behavior, or system instability."
+  },
+  "audio_call_issue": {
+    "description": "Problems with phone calls, microphones, speakers, audio playback, static, or inability to hear another person."
+  },
+  "connectivity": {
+    "description": "Wi-Fi, Bluetooth, wireless connection, or accessory connectivity problems."
+  },
+  "apple_id_account": {
+    "description": "Apple ID, account access, authentication, login, or account-related problems."
+  },
+  "app_store_purchase": {
+    "description": "App Store issues, purchases, payment/store credit problems, or downloading applications."
+  },
+  "music_media": {
+    "description": "Apple Music, iTunes, iBooks, media syncing, music playback, or media-library problems."
+  },
+  "feature_how_to": {
+    "description": "Questions about using Apple features, settings, controls, or how to perform an action."
+  },
+  "service_support": {
+    "description": "Requests for Apple support, service appointments, callbacks, contacting support, or escalation to a support representative."
+  },
+  "other_unclear": {
+    "description": "Messages that do not contain enough information to identify a supported intent, including contextual follow-ups and ambiguous messages."
+  }
+}
