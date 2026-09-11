@@ -11,87 +11,45 @@ API_KEY = os.getenv("OPENAI_API_KEY")
 
 class ReplyGenerator:
 
-    def __init__(self, model="gpt-5.6-luna"):
-        self.model = model
+    def __init__(self, model=None):
+        self.model = model or os.getenv("OPENAI_GENERATION_MODEL", "gpt-5.6-luna")
         self.client = OpenAI(api_key=API_KEY) if API_KEY else None
 
     def _clean_response(self, response):
-        """
-        Clean a historical AppleSupport response before using it
-        as a fallback customer-facing reply.
-        """
-
         response = str(response).strip()
-
         if not response:
             return ""
-
-        # Remove Twitter-style user mentions such as @739664
         response = re.sub(r"@\w+", "", response)
-
-        # Remove t.co links
         response = re.sub(r"https?://t\.co/\S+", "", response)
-
-        # Remove excessive whitespace
         response = re.sub(r"\s+", " ", response).strip()
-
         return response
 
-    def _select_safe_historical_case(
-        self,
-        historical_cases,
-        intent
-    ):
-        """
-        Select the strongest historical case that matches
-        the predicted intent.
-        """
-
+    def _select_safe_historical_case(self, historical_cases, intent):
         compatible_cases = [
             case
             for case in historical_cases
             if case.get("retrieved_intent") == intent
         ]
-
         if not compatible_cases:
             return None
-
         compatible_cases.sort(
             key=lambda case: case.get("similarity", 0),
             reverse=True
         )
-
         best_case = compatible_cases[0]
-
-        # Require reasonably strong evidence
         if best_case.get("similarity", 0) < 0.40:
             return None
-
         return best_case
 
-    def generate_reply(
-        self,
-        customer_message,
-        intent,
-        historical_cases
-    ):
-
-        # --------------------------------------------------
-        # LLM GENERATION
-        # --------------------------------------------------
-
+    def generate_reply(self, customer_message, intent, historical_cases):
         if self.client:
-
             evidence = "\n\n".join(
                 [
-                    f"Historical customer message: "
-                    f"{case['customer_message']}\n"
-                    f"Historical AppleSupport response: "
-                    f"{case['support_response']}"
+                    f"Historical customer message: {case['customer_message']}\n"
+                    f"Historical AppleSupport response: {case['support_response']}"
                     for case in historical_cases
                 ]
             )
-
             prompt = f"""
 You are an AI customer-support reply assistant for AppleSupport.
 
@@ -120,50 +78,27 @@ STRICT RULES:
 
 Customer-facing reply:
 """
-
             try:
-
                 response = self.client.responses.create(
                     model=self.model,
                     input=prompt
                 )
-
                 reply = response.output_text.strip()
-
                 if reply:
                     return self._clean_response(reply)
-
             except Exception as e:
-
-                print(
-                    f"LLM unavailable: {type(e).__name__}"
-                )
-
-                print(
-                    "Using safe historical fallback."
-                )
-
-        # --------------------------------------------------
-        # SAFE HISTORICAL FALLBACK
-        # --------------------------------------------------
+                print(f"LLM unavailable: {type(e).__name__}")
+                print("Using safe historical fallback.")
 
         best_case = self._select_safe_historical_case(
-            historical_cases,
-            intent
+            historical_cases, intent
         )
-
         if best_case:
-
             historical_response = self._clean_response(
                 best_case.get("support_response", "")
             )
-
             if historical_response:
                 return historical_response
-
-        # --------------------------------------------------
-        # FINAL SAFE FALLBACK
-        # --------------------------------------------------
 
         return (
             "Please contact Apple Support for further assistance "
@@ -172,29 +107,21 @@ Customer-facing reply:
 
 
 if __name__ == "__main__":
-
     generator = ReplyGenerator()
-
     test_cases = [
         {
             "similarity": 0.60,
             "retrieved_intent": "battery_power",
-            "customer_message":
-                "My battery is draining quickly",
-            "support_response":
-                "@123456 Let's take a closer look. "
-                "https://t.co/example"
+            "customer_message": "My battery is draining quickly",
+            "support_response": "@123456 Let's take a closer look. https://t.co/example"
         },
         {
             "similarity": 0.70,
             "retrieved_intent": "other_unclear",
-            "customer_message":
-                "Thanks",
-            "support_response":
-                "@789012 You're welcome!"
+            "customer_message": "Thanks",
+            "support_response": "@789012 You're welcome!"
         }
     ]
-
     print(
         generator.generate_reply(
             customer_message="My battery is draining quickly",
