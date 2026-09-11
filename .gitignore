@@ -24,13 +24,17 @@ env/
 .DS_Store
 Thumbs.db
 
-# Local dataset files
+# Large/local dataset files
 data/raw/
 data/processed/
-data/golden/
 
-# Generated evaluation outputs
+# Evaluation outputs are generated locally
 results/*.csv
+
+# Golden Set: keep the manually labeled submission artifact
+data/golden/*
+!data/golden/
+!data/golden/apple_golden_set_200.csv
 
 # Logs
 *.log
