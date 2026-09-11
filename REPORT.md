@@ -1,729 +1,231 @@
 # Hiver SDE Intern Take-Home Assignment
-
 ## AppleSupport AI Customer-Support Agent
 
 ### 1. Problem Framing
 
-The goal of this project is to build a small AI support agent using historical customer-support conversations from Twitter.
+The goal is to build a small support agent from historical customer-support conversations on Twitter. Given a new customer message, the system should (1) classify the issue into a compact intent taxonomy, (2) retrieve similar historical AppleSupport cases and resolutions, (3) draft a grounded reply, and (4) decide whether to auto-handle or escalate to a human.
 
-The agent should be able to:
+I chose **AppleSupport** because it has high interaction volume and diverse technical/support issues. I intentionally kept the system **human-in-the-loop**: weak intent confidence, weak evidence, short/context-dependent messages, or unusable replies should lead to escalation rather than confident unsupported answers.
 
-1. Understand what type of issue the customer is facing.
-2. Find similar cases from the brand's previous support conversations.
-3. Draft a reply based on how the brand handled similar cases in the past.
-4. Decide whether the reply is safe enough to handle automatically or whether it should be escalated to a human.
+### What I Chose Not to Build
 
-I chose **AppleSupport** as the brand because the dataset contains a large number of AppleSupport interactions and a wide variety of technical and support-related problems.
-
-I intentionally designed the system as a **human-in-the-loop support agent**. The system should not blindly answer every customer. When confidence or historical evidence is weak, it should prefer escalation.
+I did not build a multi-brand agent, autonomous account actions, automatic ticket closure, a production CRM, a complex multi-agent architecture, or a custom deep-learning intent model. The focus was the measurable pipeline: **classify → retrieve → draft → decide**.
 
 ---
 
-## What I Chose Not to Build
+## 2. Dataset, Sampling and Golden Set
 
-I deliberately kept the first version focused on the core support-agent workflow rather than trying to build a complete production support platform.
+The primary source is the Customer Support on Twitter dataset. I filtered AppleSupport tweets plus directly connected customer tweets and reconstructed conversations using the available response relationships.
 
-I did not build:
+- AppleSupport tweets: **106,860**
+- Directly connected customer tweets: **36,658**
+- Filtered rows: **143,518**
+- Reconstructed conversations: **23,674**
+- Customer messages used for intent work: **30,550**
 
-* a multi-brand support agent
-* a fully autonomous agent that can take actions on behalf of AppleSupport
-* automatic ticket closure or resolution
-* a production-grade customer database or CRM
-* a complex multi-agent architecture
-* a custom deep-learning intent model
-* a fully automated evaluation system that assumes LLM scores are always available
+I created a **200-example manually labeled Golden Set** using a fixed random seed and excluded those examples from the historical retrieval/training pool. All 12 intents are represented.
 
-The goal was to first build and measure a complete, understandable pipeline: **classify → retrieve → draft → decide whether to handle or escalate**.
+| Intent | Count |
+|---|---:|
+| `other_unclear` | 48 |
+| `ios_update` | 47 |
+| `service_support` | 29 |
+| `app_issue` | 14 |
+| `feature_how_to` | 12 |
+| `connectivity` | 10 |
+| `device_performance` | 8 |
+| `apple_id_account` | 8 |
+| `battery_power` | 8 |
+| `music_media` | 7 |
+| `audio_call_issue` | 5 |
+| `app_store_purchase` | 4 |
 
-This also made it easier to identify where the current approach fails instead of hiding the weaknesses behind a more complicated architecture.
-
-
-# 2. Dataset and Sampling
-
-The primary dataset is the Customer Support on Twitter dataset.
-
-The dataset contains:
-
-* `tweet_id`
-* `author_id`
-* `inbound`
-* `created_at`
-* `text`
-* `response_tweet_id`
-* `in_response_to_tweet_id`
-
-I first filtered the dataset to AppleSupport conversations.
-
-The AppleSupport subset contained:
-
-* **106,860 AppleSupport tweets**
-* **36,658 directly connected customer tweets**
-* **143,518 total filtered rows**
-
-I then reconstructed conversations using the response relationships available in the dataset.
-
-This resulted in approximately:
-
-* **74,879 conversation rows**
-* **23,674 conversations**
-
-From these conversations, I extracted customer messages for intent classification.
+The Golden Set is naturally imbalanced, so I report **macro F1 as well as accuracy**. Short acknowledgements and context-only messages are intentionally labeled `other_unclear` when they cannot be reliably interpreted from the available context.
 
 ---
 
-# 3. Intent Taxonomy
+## 3. Intent Taxonomy
 
-Instead of trying to create a very large number of categories, I defined 12 practical support intents.
+I defined 12 practical support intents: `ios_update`, `battery_power`, `app_issue`, `device_performance`, `audio_call_issue`, `connectivity`, `apple_id_account`, `app_store_purchase`, `music_media`, `feature_how_to`, `service_support`, and `other_unclear`.
 
-| Intent               | Description                                          |
-| -------------------- | ---------------------------------------------------- |
-| `ios_update`         | iOS/software update problems                         |
-| `battery_power`      | Battery drain, charging and power issues             |
-| `app_issue`          | Problems with a specific application                 |
-| `device_performance` | General lag, freezing or device instability          |
-| `audio_call_issue`   | Calls, microphone, speaker and audio problems        |
-| `connectivity`       | Wi-Fi, Bluetooth and wireless connectivity           |
-| `apple_id_account`   | Apple ID and account access problems                 |
-| `app_store_purchase` | App Store, payments, purchases and refunds           |
-| `music_media`        | Apple Music, iTunes and other media issues           |
-| `feature_how_to`     | Questions about using Apple features/settings        |
-| `service_support`    | Repair, appointments, callbacks and support requests |
-| `other_unclear`      | Messages that cannot be reliably classified          |
-
-I kept escalation separate from these intents because escalation describes **how the system should handle the message**, rather than what the message is about.
+Escalation is deliberately **not** an intent. It is a handling decision that can apply to any intent when confidence or evidence is insufficient.
 
 ---
 
-# 4. Golden Evaluation Set
-
-I created a manually labeled Golden Set containing **200 examples**.
-
-The examples were sampled using a fixed random seed so that the evaluation can be reproduced.
-
-All 200 examples were manually labeled and all 12 intents are represented.
-
-The distribution was:
-
-| Intent               | Examples |
-| -------------------- | -------: |
-| `other_unclear`      |       48 |
-| `ios_update`         |       47 |
-| `service_support`    |       29 |
-| `app_issue`          |       14 |
-| `feature_how_to`     |       12 |
-| `connectivity`       |       10 |
-| `device_performance` |        8 |
-| `apple_id_account`   |        8 |
-| `battery_power`      |        8 |
-| `music_media`        |        7 |
-| `audio_call_issue`   |        5 |
-| `app_store_purchase` |        4 |
-
-One important observation is that the Golden Set is not balanced. In particular, `other_unclear` and `ios_update` occur much more often than some of the smaller categories.
-
-Because of this, I report **macro F1 alongside accuracy** instead of relying on accuracy alone.
-
----
-
-# 5. System Architecture
-
-The overall pipeline is:
+## 4. System Architecture
 
 ```text
-Twitter Customer-Support Dataset
-              |
-              v
-        AppleSupport Filter
-              |
-              v
-     Conversation Reconstruction
-              |
-              v
-        Customer Messages
-              |
-       +------+------+
-       |             |
-       v             v
- Intent Classifier   Historical Retriever
-       |             |
-       |             v
-       |       Similar AppleSupport Cases
-       |             |
-       +------+------+
-              |
-              v
+Twitter Dataset
+     |
+     v
+AppleSupport Filter
+     |
+     v
+Conversation Reconstruction
+     |
+     v
+Customer Message
+     |
+     +-------------------+
+     |                   |
+     v                   v
+Intent Classifier    Historical Retriever
+     |                   |
+     +---------+---------+
+               v
         Reply Generator
-              |
-              v
-       Safety / Decision Engine
-              |
-       +------+------+
-       |             |
-       v             v
- AUTO_HANDLE      ESCALATE
+               |
+               v
+        Decision Engine
+          /         \
+ AUTO_HANDLE       ESCALATE
 ```
 
-The intent classifier currently uses **TF-IDF + Logistic Regression**.
-
-The historical retriever uses TF-IDF similarity to find previous customer-support cases and their corresponding AppleSupport responses.
-
-The reply generation layer supports an external LLM, but also has a safe historical-response fallback when the LLM is unavailable.
+The intent classifier is **TF-IDF + Logistic Regression**. The retriever uses TF-IDF similarity over historical customer→AppleSupport response pairs. The reply generator supports an external LLM with strict grounding instructions and a safe historical-response fallback. The decision engine uses confidence, message length/context, compatible historical evidence, similarity, and reply quality checks.
 
 ---
 
-# 6. Baselines
+## 5. Baselines and Intent Results
 
-I used two baselines for intent classification.
+I used two baselines on the untouched 200-example Golden Set.
 
-## 6.1 Majority-Class Baseline
+| Method | Accuracy | Macro F1 |
+|---|---:|---:|
+| Majority class | 24.00% | 3.23% |
+| TF-IDF + Logistic Regression | **36.50%** | **28.42%** |
 
-The majority baseline always predicts:
+The majority baseline predicts `other_unclear`. The classifier improves both metrics, but the result is not production-ready.
 
-`other_unclear`
+Because labeling all 30,550 customer messages manually was impractical, the classifier was trained on **30,350 deterministic silver-labeled examples** after excluding the Golden Set. The silver labels are noisy; approximately **77.7%** are `other_unclear`. I therefore treat silver labels as training data, not ground truth.
 
-Results on the 200-example Golden Set:
+The largest classification errors were:
 
-| Metric   | Majority Baseline |
-| -------- | ----------------: |
-| Accuracy |        **24.00%** |
-| Macro F1 |         **3.23%** |
+| True → Predicted | Errors |
+|---|---:|
+| `ios_update` → `other_unclear` | 35 |
+| `service_support` → `other_unclear` | 20 |
+| `feature_how_to` → `other_unclear` | 11 |
+| `app_issue` → `device_performance` | 6 |
+| `connectivity` → `other_unclear` | 6 |
 
-The accuracy is relatively high compared with the macro F1 because the Golden Set is imbalanced.
-
----
-
-## 6.2 TF-IDF + Logistic Regression
-
-The second baseline uses TF-IDF features with a Logistic Regression classifier.
-
-The model was trained on the larger silver-labeled dataset and evaluated only on the manually labeled Golden Set.
-
-Results:
-
-| Metric   | TF-IDF + Logistic Regression |
-| -------- | ---------------------------: |
-| Accuracy |                   **36.50%** |
-| Macro F1 |                   **28.42%** |
-
-This is an improvement over the majority baseline:
-
-* Accuracy: **24.00% → 36.50%**
-* Macro F1: **3.23% → 28.42%**
-
-However, the result is still far from what I would consider production-ready.
+These errors are concentrated around short, contextual, or semantically overlapping Twitter messages rather than being uniformly distributed.
 
 ---
 
-# 7. Silver Labels
+## 6. Retrieval Experiments
 
-Since manually labeling the full customer-message dataset was not practical, I created deterministic rule-based silver labels for the remaining messages.
+After excluding the 200 Golden conversations, the historical pool contained **74,261 conversations** and **20,492 customer→AppleSupport response pairs**.
 
-The silver dataset contained approximately **30,350 training examples** after excluding the Golden Set.
+Mean top-1 TF-IDF similarity was **0.4674**, but similarity is not retrieval accuracy. Several very short messages achieved similarity **1.0** while retrieving an unhelpful case.
 
-The biggest limitation is the class imbalance:
+Using the silver intent of retrieved cases as a proxy for retrieval correctness:
 
-* `other_unclear`: approximately **77.7%**
-
-This means the silver labels are noisy and biased.
-
-Therefore, I treat the silver labels as **training data only**, not as ground truth.
-
-This is also one reason why the final classifier results should be interpreted carefully.
-
----
-
-# 8. Retrieval Experiments
-
-The agent retrieves historical AppleSupport customer-support cases before generating a reply.
-
-For the historical retrieval dataset:
-
-* **74,261 historical conversations** were available after excluding Golden Set conversations.
-* **20,492 historical customer → AppleSupport response pairs** were available.
-
-The average top-1 similarity on the Golden Set was:
-
-**0.4674**
-
-However, similarity alone is not retrieval accuracy.
-
-For example, some very short messages received a similarity score of **1.0** even though the retrieved case was not actually useful.
-
-This was an important finding during failure analysis.
-
-## Retrieval intent matching
-
-I also checked whether the retrieved case's silver intent matched the human-labeled intent.
-
-Results:
-
-| Metric                 |  Top-1 |  Top-3 |  Top-5 |
-| ---------------------- | -----: | -----: | -----: |
-| Retrieval intent match | 29.50% | 34.00% | 36.00% |
-
-For actionable messages only:
-
-| Metric                 | Top-1 |  Top-3 |  Top-5 |
-| ---------------------- | ----: | -----: | -----: |
-| Retrieval intent match | 7.89% | 13.16% | 15.79% |
-
-These numbers show that lexical similarity is not enough to reliably retrieve the correct historical resolution.
-
----
-
-# 9. Retrieval Experiments with Context
-
-I also tested whether adding previous conversation messages would improve retrieval.
-
-The idea was that a message such as:
-
-> "Done"
-
-or
-
-> "11.0.2"
-
-contains very little information by itself.
-
-Using previous conversation context produced:
-
-* Top-1: **26.00%**
-* Top-3: **34.50%**
-* Top-5: **36.50%**
-
-A hybrid approach was also tested, where context was used only for weak/context-dependent messages.
-
-The hybrid approach produced:
-
-* Top-1: **26.50%**
-* Top-3: **34.00%**
-* Top-5: **36.00%**
-
-It helped some weak examples but did not provide enough overall improvement to replace the simpler retrieval approach.
-
----
-
-# 10. Intent-Aware Retrieval Experiment
-
-I tested a second retrieval idea where a historical case received an additional score when its silver intent matched the predicted intent.
-
-Results:
-
-| Method                 |      Top-1 |  Top-3 |  Top-5 |
-| ---------------------- | ---------: | -----: | -----: |
-| Original retrieval     |     29.50% | 34.00% | 36.00% |
+| Retrieval | Top-1 | Top-3 | Top-5 |
+|---|---:|---:|---:|
+| Original | 29.50% | 34.00% | 36.00% |
 | Intent-aware reranking | **33.00%** | 33.50% | 34.00% |
 
-The reranking improved Top-1 retrieval, but Top-3 and Top-5 became worse.
+For actionable messages only, original retrieval intent match was **7.89% / 13.16% / 15.79%** at Top-1/3/5. These figures use noisy silver labels and are therefore a diagnostic proxy, not ground truth retrieval accuracy.
 
-Since the additional intent signal is itself based on noisy silver labels, I decided not to make this the main retrieval strategy.
+I also tested adding up to two previous messages as retrieval context. Results were **26.00% / 34.50% / 36.50%** at Top-1/3/5. A hybrid strategy for weak messages produced **26.50% / 34.00% / 36.00%**. Context helped some weak examples but did not improve the overall approach enough to replace the simpler strategy.
+
+Intent-aware reranking improved Top-1 but reduced Top-3/Top-5, and it depends on noisy silver labels, so I did not make it the main strategy.
 
 ---
 
-# 11. Reply Generation
+## 7. Reply Generation and Safety
 
-The reply generation layer is designed around historical AppleSupport responses.
-
-The intended flow is:
+The intended generation flow is:
 
 ```text
-Customer message
-       |
-       v
-Predicted intent
-       |
-       v
-Similar historical cases
-       |
-       v
-Historical AppleSupport responses
-       |
-       v
-LLM
-       |
-       v
-Customer-facing draft reply
+Customer message → predicted intent → historical cases →
+AppleSupport responses → grounded draft reply
 ```
 
-The LLM prompt instructs the generator to:
+The LLM prompt requires historical evidence, prohibits invented policies/actions/guarantees, avoids exposing internal intent or AI identity, and asks for a support escalation when evidence is weak.
 
-* use historical responses as evidence
-* avoid inventing policies
-* avoid unsupported actions or guarantees
-* avoid mentioning the internal intent
-* avoid mentioning that it is an AI
-* keep the reply concise
-* ask the customer to contact Apple Support when the evidence is weak
+During final evaluation, the OpenAI API returned **`credit_balance_exhausted`**. I therefore did **not** claim that the evaluated replies were LLM-generated. The system used its historical-response fallback instead. This is an important limitation of the reported agent results, and no fabricated LLM-judge scores are included.
 
 ---
 
-# 12. Important LLM Limitation
+## 8. Auto-Handle vs Escalate
 
-The OpenAI API could not be used during the final evaluation because the API account had no available credits.
-
-The API returned:
-
-`credit_balance_exhausted`
-
-Because of this, I did **not** pretend that the 200 evaluated replies were generated by the LLM.
-
-Instead, the system used the historical-response fallback.
-
-The fallback was tested and worked successfully.
-
-This means the current agent evaluation measures the full pipeline and safety/decision logic, but its replies should not be described as LLM-generated replies.
-
----
-
-# 13. Decision Engine
-
-The decision engine determines whether the system should automatically handle the message or escalate it.
-
-The current system checks:
+The decision engine is deliberately conservative. It checks:
 
 1. Intent confidence.
-2. Whether the message is very short or context-dependent.
-3. Whether compatible historical cases exist.
+2. Short/context-dependent messages.
+3. Presence of intent-compatible historical cases.
 4. Historical similarity.
-5. Whether a usable reply exists.
-6. Whether the reply appears incomplete or unsafe.
+5. Presence and usability of a reply.
+6. Signs that a reply is incomplete or unsafe.
 
-The current thresholds are deliberately conservative.
+On the 200-example Golden Set:
 
-The final 200-example evaluation produced:
+| Decision | Count | Share |
+|---|---:|---:|
+| `AUTO_HANDLE` | 17 | **8.5%** |
+| `ESCALATE` | 183 | **91.5%** |
 
-| Decision      | Examples | Percentage |
-| ------------- | -------: | ---------: |
-| `AUTO_HANDLE` |       17 |   **8.5%** |
-| `ESCALATE`    |      183 |  **91.5%** |
-
-I consider the high escalation rate acceptable for this prototype because the goal is to avoid confidently sending unsupported replies.
+The high escalation rate is intentional for this prototype: it is preferable to escalate an uncertain message than confidently send unsupported guidance.
 
 ---
 
-# 14. Intent Evaluation
+## 9. Top Failure Patterns
 
-The final agent evaluation on the 200-example Golden Set produced:
+**1. iOS update → `other_unclear` (35 errors).** Version-only or “already updated” messages can be meaningful only with earlier conversation context.
 
-**Intent Accuracy: 36.50%**
+**2. Service workflow → `other_unclear` (20 errors).** Messages such as “DM sent” or “waiting for response” describe support state rather than a technical issue.
 
-The largest confusion patterns were:
+**3. Feature/how-to → `other_unclear` (11 errors).** Customers often describe a desired behavior without explicitly naming it as a how-to question.
 
-| True Intent       | Predicted Intent     | Errors |
-| ----------------- | -------------------- | -----: |
-| `ios_update`      | `other_unclear`      |     35 |
-| `service_support` | `other_unclear`      |     20 |
-| `feature_how_to`  | `other_unclear`      |     11 |
-| `app_issue`       | `device_performance` |      6 |
-| `connectivity`    | `other_unclear`      |      6 |
+**4. App issue → device performance (6 errors).** “Crashing”, “freezing”, and “not working” overlap across app-specific and device-wide problems.
 
-The most common problem is therefore not random classification. It is the difficulty of understanding short, contextual Twitter messages.
+**5. Connectivity → `other_unclear` (6 errors).** Very short messages containing Wi-Fi/Bluetooth terms are difficult to interpret without context.
+
+A particularly important failure was **“Iphone 6S, IOS 11.0.3”**. The classifier gave approximately **0.84 confidence**, retrieval similarity was **1.0**, and the system selected `AUTO_HANDLE`, while the human label was `device_performance`. This shows why confidence and lexical similarity cannot be treated as proof that the system understands the user's actual problem.
 
 ---
 
-# 15. Top 5 Failure Patterns
+## 10. Human Evaluation
 
-## Failure 1: iOS update → other_unclear
+I manually audited **30 examples**: all 17 AUTO_HANDLE examples plus 13 randomly selected ESCALATE examples. This is a decision-stratified audit, not a representative estimate of the full Golden Set.
 
-This was the largest error group.
-
-Many messages mention an iOS version or say that they have already updated the device.
-
-For example, a message such as:
-
-> "I just updated it to software version 11.0.3."
-
-contains useful information for a human, but the classifier can treat it as unclear because it does not explicitly describe the problem.
-
-### Hypothesis
-
-The classifier needs conversation context and better handling of version/update language.
-
----
-
-## Failure 2: service_support → other_unclear
-
-Messages such as:
-
-* "DM sent"
-* "Waiting for response"
-* "Spoke with an advisor"
-* "No satisfactory resolution"
-
-are support-workflow messages rather than technical descriptions.
-
-### Hypothesis
-
-A separate conversation-state or support-workflow model could help identify these messages.
-
----
-
-## Failure 3: feature_how_to → other_unclear
-
-Some customers ask about features indirectly instead of explicitly saying "How do I...?"
-
-These messages often require the previous conversation to understand what feature they are referring to.
-
-### Hypothesis
-
-Feature names and conversation context should be included more strongly in the classifier.
-
----
-
-## Failure 4: app_issue → device_performance
-
-Both categories contain words such as:
-
-* crashing
-* freezing
-* restarting
-* not working
-
-The difference is whether the problem is specific to an application or affects the device more generally.
-
-### Hypothesis
-
-The classifier needs stronger entity-level understanding of the application involved.
-
----
-
-## Failure 5: connectivity → other_unclear
-
-Very short messages such as:
-
-> "Wi-Fi"
-
-or
-
-> "I did try to update via Wi-Fi"
-
-can be difficult to classify correctly.
-
-### Hypothesis
-
-The system needs better context handling and should distinguish the actual problem from incidental words such as "Wi-Fi."
-
----
-
-# 16. A Particularly Important Failure
-
-One example was:
-
-> "Iphone 6S, IOS 11.0.3"
-
-The model predicted `other_unclear` with approximately **0.84 confidence**.
-
-The retrieved similarity was **1.0**, and the decision engine allowed `AUTO_HANDLE`.
-
-However, the manually assigned intent was `device_performance`.
-
-This is exactly the type of example that influenced the conservative design of the decision engine.
-
-It demonstrates that:
-
-**high classifier confidence + high retrieval similarity does not automatically mean that the system understands the customer's problem.**
-
----
-
-# 17. Human Evaluation
-
-I manually evaluated a 30-example audit set.
-
-The sample contained:
-
-* all 17 `AUTO_HANDLE` examples
-* 13 randomly selected `ESCALATE` examples
-
-This was intentionally a decision-focused audit rather than a representative estimate of the full 200-example Golden Set.
-
-The average scores were:
-
-| Dimension    |        Score |
-| ------------ | -----------: |
+| Dimension | Average |
+|---|---:|
 | Groundedness | **4.40 / 5** |
-| Relevance    | **4.17 / 5** |
-| Helpfulness  | **3.63 / 5** |
-| Safety       | **4.80 / 5** |
-| Overall      | **3.90 / 5** |
+| Relevance | **4.17 / 5** |
+| Helpfulness | **3.63 / 5** |
+| Safety | **4.80 / 5** |
+| Overall | **3.90 / 5** |
 
-The weakest dimension was **helpfulness**.
+AUTO_HANDLE examples averaged **4.41/5 overall**, while ESCALATE examples averaged **3.23/5**. Helpfulness was the weakest dimension, mainly because conservative fallbacks can be safe but generic.
 
-This makes sense because many escalated examples use safe but generic replies such as asking the customer to contact Apple Support.
-
-Those replies are safe, but they do not necessarily solve the customer's problem.
+The LLM-as-judge harness is implemented with a five-dimension rubric (groundedness, relevance, helpfulness, safety, overall), and a separate script computes exact agreement, within-one agreement, MAE and weighted kappa against human scores. However, because the API had no credits during evaluation, **judge-human agreement could not be measured** and is intentionally not reported as a result.
 
 ---
 
-# 18. Human Evaluation by Decision
+## 11. What Is Misleading About My Headline Number?
 
-The difference between automatic and escalated cases was also useful:
+The headline **36.50% intent accuracy** is easy to misread.
 
-| Decision    | Groundedness | Relevance | Helpfulness | Safety |  Overall |
-| ----------- | -----------: | --------: | ----------: | -----: | -------: |
-| AUTO_HANDLE |         4.82 |      4.53 |        4.41 |   4.88 | **4.41** |
-| ESCALATE    |         3.85 |      3.69 |        2.62 |   4.69 | **3.23** |
+First, the model was trained on noisy rule-based silver labels rather than fully human-labeled training data. Second, the Golden Set is imbalanced. Third, many Twitter messages are incomplete without conversation context. Finally, the full agent's reply generation used the historical fallback during final evaluation because the LLM API was unavailable.
 
-This suggests that the decision engine is behaving conservatively in the right direction: the examples that it allowed through as `AUTO_HANDLE` generally received better human ratings.
-
-However, because the human audit contains only 30 examples and was intentionally stratified by decision, I would not treat these numbers as a statistically representative estimate of overall system quality.
+Therefore, 36.50% is best interpreted as a transparent prototype benchmark, not as a production-quality support-agent accuracy number. The more useful conclusion is where the system fails and which safeguards prevent those failures from becoming automatic customer responses.
 
 ---
 
-# 19. LLM-as-Judge
+## 12. What I Would Improve Next Week
 
-I implemented an LLM-as-judge evaluation harness using five dimensions:
-
-1. Groundedness
-2. Relevance
-3. Helpfulness
-4. Safety
-5. Overall quality
-
-The judge is designed to score each dimension from 1–5 and provide a short reason.
-
-I also implemented a comparison script that will compare LLM and human scores using:
-
-* exact agreement
-* agreement within one point
-* mean absolute error
-* quadratic weighted Cohen's kappa
-
-However, the LLM judge could not be executed because the OpenAI API account had no available credits.
-
-I intentionally did not fabricate judge scores or judge-human agreement numbers.
-
-The harness is ready to run when API access is available.
+1. Replace rule-based silver labels with a smaller but higher-quality human-labeled training set and active learning around failure cases.
+2. Use conversation-aware intent classification rather than classifying the target tweet in isolation.
+3. Replace lexical retrieval with dense embeddings and rerank retrieved cases using intent, issue entities and resolution relevance.
+4. Evaluate retrieval using human judgments of **resolution usefulness**, not only similarity or silver-intent agreement.
+5. Add explicit conversation-state handling for acknowledgements, version-only messages and support-workflow replies.
+6. Run the LLM generation and judge evaluation with available API credits, then report judge-human agreement rather than leaving it unmeasured.
+7. Expand the safety gate so AUTO_HANDLE requires evidence that is both semantically relevant and resolution-compatible.
 
 ---
 
-# 20. What Is Misleading About My Headline Number?
+## Final Takeaway
 
-The headline number is:
-
-**36.50% intent accuracy.**
-
-It is useful, but it can also be misleading if presented without context.
-
-First, the classifier is trained using noisy silver labels rather than a fully human-labeled training set.
-
-Second, the Golden Set is imbalanced.
-
-Third, many Twitter messages are extremely short and depend on previous conversation context.
-
-Fourth, the current LLM was not available during evaluation, so the reply-generation results are based on the historical fallback rather than actual LLM generation.
-
-Finally, retrieval similarity can be high even when the retrieved case is not actually useful.
-
-For this reason, I would not describe the system as a production-ready 36.5%-accurate support agent.
-
-A more honest summary is:
-
-> The initial TF-IDF classifier improves substantially over the majority baseline, but the system still struggles with context-dependent customer messages. The strongest current result is the conservative safety behavior and the ability to ground fallback responses in historical AppleSupport interactions, rather than the raw classification accuracy alone.
-
----
-
-# 21. What I Would Improve Next Week
-
-If I had another week, I would focus on the following improvements.
-
-## 1. Improve the training labels
-
-The current silver-label approach is the biggest data-quality limitation.
-
-I would manually label a larger and more balanced training set, especially for:
-
-* `ios_update`
-* `service_support`
-* `feature_how_to`
-* `app_issue`
-* `connectivity`
-
----
-
-## 2. Use conversation context for classification
-
-Instead of classifying only the target tweet, I would include the previous one or two customer/support messages.
-
-This should particularly help with:
-
-* "Done"
-* "Yes"
-* version numbers
-* "Still happening"
-* "I did"
-* "Thanks"
-
----
-
-## 3. Improve retrieval beyond TF-IDF
-
-The current retrieval is mainly lexical.
-
-I would test semantic embeddings so that messages with different wording but the same problem can retrieve each other.
-
-I would also evaluate retrieval using manually labeled relevance rather than relying mainly on silver intent labels.
-
----
-
-## 4. Improve the decision model
-
-The current decision engine is rule-based.
-
-A next version could combine:
-
-* intent confidence
-* retrieval relevance
-* historical response quality
-* message completeness
-* context availability
-* reply safety checks
-
-into a calibrated confidence score.
-
----
-
-## 5. Improve reply usefulness
-
-The human evaluation showed that helpfulness was the weakest dimension.
-
-The system currently prefers safety over aggressive troubleshooting.
-
-The next version should provide more useful next steps when there is strong historical evidence, while still preventing unsupported claims.
-
----
-
-## 6. Run the LLM judge
-
-Once API access is available, I would run the existing judge harness and compare its scores with the human audit.
-
-This would complete the judge-human agreement part of the evaluation.
-
----
-
-# 22. Final Takeaway
-
-This project started as a simple intent-classification problem, but the evaluation showed that the harder problem is actually **understanding support conversations with incomplete context**.
-
-The system currently has a working end-to-end pipeline:
-
-```text
-Customer message
-      ↓
-Intent classification
-      ↓
-Historical case retrieval
-      ↓
-Grounded reply generation / fallback
-      ↓
-Safety checks
-      ↓
-AUTO_HANDLE or ESCALATE
-```
-
-The initial classifier achieved **36.50% accuracy and 28.42% macro F1**, improving over the majority baseline of **24.00% accuracy and 3.23% macro F1**.
-
-The human audit produced an overall quality score of **3.90/5**, with particularly strong safety at **4.80/5**.
-
-The biggest remaining weaknesses are context-dependent messages, noisy silver labels, lexical retrieval, and reply helpfulness.
-
-I would therefore treat this implementation as a **working prototype and evaluation framework**, rather than a production-ready customer-support system.
+The prototype demonstrates the complete support-agent workflow and, more importantly, exposes its weaknesses honestly. The strongest lesson from the experiments is that **retrieval similarity and classifier confidence are not sufficient evidence of understanding**. A practical support agent therefore needs conversation context, better retrieval, stronger evaluation of resolution usefulness, and conservative human escalation.
